@@ -324,3 +324,47 @@ class ScheduleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NotesLayoutTests(unittest.TestCase):
+    def _video(self, root):
+        return {
+            "id": "123",
+            "title": 'Why "marketing" pulls you down: a #story',
+            "uploader": "creator",
+            "url": "https://www.tiktok.com/@creator/video/123",
+            "hook": "Start with a specific promise.",
+            "frame_path": str(root / "vault" / "assets" / "tiktok-hooks" / "123.jpg"),
+            "saved_at": "2026-08-28T10:00:00+00:00",
+        }
+
+    def test_note_filename_is_safe_and_unique(self):
+        name = hooks.note_filename(self._video(Path("/x")))
+        self.assertEqual(
+            name, "@creator — Why marketing pulls you down a story (123).md"
+        )
+
+    def test_note_has_properties_and_relative_frame(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            note = root / "vault" / "TikTok Hooks" / "note.md"
+            text = hooks.note_entry(self._video(root), note)
+            self.assertTrue(text.startswith("---\n"))
+            self.assertIn('hook: "Start with a specific promise."', text)
+            self.assertIn('frame: "[[123.jpg]]"', text)
+            self.assertIn("saved: 2026-08-28", text)
+            self.assertIn("(<../assets/tiktok-hooks/123.jpg>)", text)
+
+    def test_write_notes_creates_folder_and_base_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "vault" / ".obsidian").mkdir(parents=True)
+            markdown = root / "vault" / "Tiktok" / "TikTok Hooks.md"
+            folder = sync.write_notes(markdown, [self._video(root)])
+            self.assertEqual(folder, root / "vault" / "Tiktok" / "TikTok Hooks")
+            self.assertEqual(len(list(folder.glob("*.md"))), 1)
+            base = markdown.with_suffix(".base")
+            self.assertIn('file.inFolder("Tiktok/TikTok Hooks")', base.read_text())
+            base.write_text("custom")
+            sync.write_notes(markdown, [self._video(root)])
+            self.assertEqual(base.read_text(), "custom")

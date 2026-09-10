@@ -16,7 +16,8 @@ Try the zero-install public-link demo at [hookline-blue.vercel.app](https://hook
 
 - macOS
 - Python 3.10 or newer
-- Chrome, Safari, Firefox, Brave, or Edge logged into TikTok for private collections
+- A browser whose cookies `yt-dlp` can read: Chrome, Chromium, Brave, Edge, Firefox, Safari, Opera, or Vivaldi
+- Arc is not supported; log into TikTok in one of the supported browsers instead
 - [`ffmpeg`](https://ffmpeg.org/)
 
 Install ffmpeg with Homebrew if needed:
@@ -28,10 +29,11 @@ brew install ffmpeg
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/louisedesadeleer/tiktok-hooks/v1.0.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/louisedesadeleer/tiktok-hooks/v1.1.0/install.sh \
+  | TIKTOK_HOOKS_BASE_URL=https://raw.githubusercontent.com/louisedesadeleer/tiktok-hooks/v1.1.0 bash
 ```
 
-Alternatively, [download v1.0.0](https://github.com/louisedesadeleer/tiktok-hooks/archive/refs/tags/v1.0.0.zip), extract it, and run:
+Alternatively, [download v1.1.0](https://github.com/louisedesadeleer/tiktok-hooks/archive/refs/tags/v1.1.0.zip), extract it, and run:
 
 ```bash
 bash install.sh
@@ -54,6 +56,19 @@ Claude asks where to save your Markdown file and, optionally, which private coll
 > Save my hooks to `~/Documents/MyVault/TikTok Hooks.md`.
 
 > Schedule my TikTok hook collection to sync every morning at 9.
+
+## Obsidian Bases
+
+The default `single` layout keeps every hook in one Markdown file. Choose `notes` to create one Markdown note per hook plus an Obsidian `.base` file with table and gallery views:
+
+```bash
+~/.local/share/tiktok-hooks/venv/bin/python \
+  ~/.claude/skills/tiktok-hooks/scripts/configure.py \
+  --markdown-path "~/Documents/MyVault/TikTok Hooks.md" \
+  --layout notes
+```
+
+The notes live in `TikTok Hooks/` next to the configured path, and `TikTok Hooks.base` is created on the first sync. Hook properties include the TikTok ID, creator, title, opening text, source, save date, and first frame. The Bases file is never overwritten, so its views are safe to customize. Use `--layout single` to switch back; `single` remains the default for existing users.
 
 ## What stays on your computer
 

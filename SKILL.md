@@ -18,7 +18,8 @@ If it does not, ask the user:
 
 1. Where should the Markdown file be saved? Accept a normal `.md` path or a file inside an Obsidian vault.
 2. Do they want to sync a TikTok collection? If yes, ask for its URL and which browser contains their TikTok login. Default to `chrome` only if they confirm it.
-3. How many existing collection videos should the first sync import? Recommend five.
+3. Single Markdown file, or one note per hook with an Obsidian Bases table? Recommend notes for Obsidian users.
+4. How many existing collection videos should the first sync import? Recommend five.
 
 Never ask for cookie values, passwords, or TikTok credentials. The local downloader reads the browser's cookie store itself.
 
@@ -29,6 +30,7 @@ Run:
   --markdown-path "<absolute-or-home-relative-path>" \
   --collection-url "<url-if-provided>" \
   --browser "<browser-if-provided>" \
+  --layout <notes-or-single> \
   --initial-count <count>
 ```
 
@@ -85,5 +87,7 @@ Each saved entry contains:
 - the exact first two spoken sentences, or three when the first two are unusually short
 - a relative link to the extracted first frame
 - creator, source URL, save date, and TikTok video ID
+
+In the default `single` layout, entries are prepended to one Markdown file. In the `notes` layout, each hook is a note in a `<name>/` folder next to the configured Markdown path. Each note has `tiktok_id`, `creator`, `title`, `hook`, `source`, `saved`, and `frame` properties. A `<name>.base` file provides table and gallery views; it is created on the first sync and never overwritten.
 
 Keep the downloaded MP4 and temporary audio only while processing. Persist screenshots, Markdown, configuration, and deduplication state.

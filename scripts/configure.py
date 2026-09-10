@@ -82,7 +82,10 @@ def configure(arguments: argparse.Namespace) -> dict:
     if check_count < initial_count:
         sys.exit("--check-count must be at least --initial-count.")
 
+    layout = getattr(arguments, "layout", None) or current.get("layout", "single")
+
     config = {
+        "layout": layout,
         "markdown_path": str(markdown),
         "assets_path": str(assets),
         "collection_url": collection_url,
@@ -94,7 +97,9 @@ def configure(arguments: argparse.Namespace) -> dict:
 
     markdown.parent.mkdir(parents=True, exist_ok=True)
     assets.mkdir(parents=True, exist_ok=True)
-    if not markdown.exists():
+    if layout == "notes":
+        markdown.with_suffix("").mkdir(parents=True, exist_ok=True)
+    elif not markdown.exists():
         markdown.write_text("# TikTok Hooks\n\n")
 
     write_json(CONFIG_PATH, config)
@@ -108,6 +113,11 @@ def main() -> None:
     parser.add_argument("--collection-url", type=validate_collection_url)
     parser.add_argument("--browser")
     parser.add_argument("--model", choices=("tiny", "base", "small"))
+    parser.add_argument(
+        "--layout",
+        choices=("single", "notes"),
+        help="single: one Markdown file; notes: one note per hook plus an Obsidian Bases table",
+    )
     parser.add_argument("--initial-count", type=positive_integer)
     parser.add_argument("--check-count", type=positive_integer)
     parser.add_argument("--show", action="store_true")
@@ -122,7 +132,12 @@ def main() -> None:
 
     config = configure(arguments)
     print(f"Configuration: {CONFIG_PATH}")
-    print(f"Markdown: {config['markdown_path']}")
+    if config["layout"] == "notes":
+        folder = Path(config["markdown_path"]).with_suffix("")
+        print(f"Notes folder: {folder}")
+        print(f"Bases table: {folder.with_suffix('.base')} (created on first sync)")
+    else:
+        print(f"Markdown: {config['markdown_path']}")
     if config.get("collection_url"):
         print(f"Collection: {config['collection_url']}")
 
