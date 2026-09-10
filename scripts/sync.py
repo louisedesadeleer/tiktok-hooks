@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hooks import extract_hook, markdown_entry
+from hooks import base_file, extract_hook, markdown_entry, note_entry, note_filename
 
 CONFIG_DIR = Path(
     os.environ.get("TIKTOK_HOOKS_CONFIG_HOME", Path.home() / ".config" / "tiktok-hooks")
@@ -324,6 +324,34 @@ def append_markdown(markdown: Path, videos: list[dict]) -> None:
     temporary.replace(markdown)
 
 
+def notes_folder(markdown: Path) -> Path:
+    """Per-hook notes live in a folder named after the Markdown file, next to it."""
+    return markdown.with_suffix("")
+
+
+def vault_relative(path: Path) -> str:
+    """Path relative to the enclosing Obsidian vault (for Bases filters)."""
+    for parent in path.parents:
+        if (parent / ".obsidian").is_dir():
+            return path.relative_to(parent).as_posix()
+    return path.name
+
+
+def write_notes(markdown: Path, videos: list[dict]) -> Path:
+    folder = notes_folder(markdown)
+    folder.mkdir(parents=True, exist_ok=True)
+    for video in videos:
+        note = folder / note_filename(video)
+        temporary = note.with_suffix(note.suffix + ".tmp")
+        temporary.write_text(note_entry(video, note))
+        temporary.replace(note)
+
+    base = markdown.with_suffix(".base")
+    if not base.exists():
+        base.write_text(base_file(vault_relative(folder)))
+    return folder
+
+
 def select_collection_videos(
     videos: list[dict], state: dict, config: dict
 ) -> list[dict]:
@@ -377,7 +405,10 @@ def sync(arguments: argparse.Namespace) -> tuple[list[dict], list[tuple[dict, st
                 print(f"warning: {video['id']} failed: {error}", file=sys.stderr)
 
     if completed:
-        append_markdown(markdown, completed)
+        if config.get("layout") == "notes":
+            write_notes(markdown, completed)
+        else:
+            append_markdown(markdown, completed)
         saved.update(video["id"] for video in completed)
 
     state["saved"] = sorted(saved | set(state["saved"]))
@@ -403,10 +434,16 @@ def main() -> None:
         sys.exit(f"error: {error}")
 
     config = load_config()
+    markdown = Path(config["markdown_path"]).expanduser()
+    destination = (
+        f"{notes_folder(markdown)}/ (table: {markdown.with_suffix('.base').name})"
+        if config.get("layout") == "notes"
+        else str(markdown)
+    )
     if completed:
-        print(f"Saved {len(completed)} hook(s) to {config['markdown_path']}")
+        print(f"Saved {len(completed)} hook(s) to {destination}")
     elif not failed:
-        print(f"No new hooks. Markdown: {config['markdown_path']}")
+        print(f"No new hooks. Destination: {destination}")
 
     if failed:
         print(f"{len(failed)} video(s) failed and will be retried.", file=sys.stderr)
