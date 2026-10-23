@@ -11,6 +11,10 @@ Save the first 2–3 spoken sentences and actual opening frame from TikTok video
 
 [Hookline](https://hookline-blue.vercel.app/) is the separate, zero-install public TikTok demo. Its browser library does not sync with this skill. This repository contains the local skill, not the web app; these Instagram and destination features require installing the updated skill.
 
+## Watch the tutorial
+
+[![Build a Claude Skill for Content Hooks – full tutorial](assets/tutorial-thumbnail.jpg)](https://www.tella.tv/video/build-a-claude-skill-for-content-hooks-full-tutorial-169-aey6ei8n)
+
 ## Requirements and install
 
 - macOS, Python 3.10+, and `ffmpeg` (`brew install ffmpeg`)
