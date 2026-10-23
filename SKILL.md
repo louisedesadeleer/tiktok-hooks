@@ -1,93 +1,71 @@
 ---
 name: tiktok-hooks
-description: Save the opening hook and first frame from a TikTok link, or sync new videos from a private TikTok collection, into a local Markdown or Obsidian swipe file. Use when someone asks to save a TikTok hook, sync their hook collection, configure their hook destination, or schedule collection syncing.
-argument-hint: "[TikTok URL]"
+description: Save opening speech and first frames from TikTok or Instagram video links to Obsidian, Notion, or Markdown; configure destinations and sync or schedule a TikTok collection.
+argument-hint: "[TikTok or Instagram video URL]"
 ---
 
-# TikTok Hooks
+# TikTok & Instagram Hooks
 
-Save TikTok openings locally. The bundled Python scripts read TikTok login cookies directly from the user's browser, transcribe on the user's machine, and never retain downloaded videos.
+Use the bundled Python scripts for extraction and saving. Resolve script paths relative to this file. Use `~/.local/share/tiktok-hooks/venv/bin/python`; if missing, follow the installation section in [README.md](README.md).
 
-Resolve all script paths relative to this `SKILL.md` file. Use the Python interpreter at `~/.local/share/tiktok-hooks/venv/bin/python` when it exists; otherwise explain that the skill must be installed before syncing.
+## Setup or change destination
 
-## First-time setup
+Read `~/.config/tiktok-hooks/config.json` if present (or run `scripts/configure.py --show`). Preserve existing settings unless the user asks to change them. Existing configurations without a destination use Markdown.
 
-Check whether `~/.config/tiktok-hooks/config.json` exists.
+Ask for missing choices:
 
-If it does not, ask the user:
+- Destination: Obsidian, Notion, or plain Markdown.
+- For Obsidian/Markdown: the `.md` path. Obsidian defaults to one note per hook plus a Bases table/gallery; `--layout single` keeps everything in one file.
+- For Notion: the parent page URL. Use a normal page, not a database. Explain that the hook text, metadata, and opening image will be uploaded there. Follow the Notion setup section in [README.md](README.md) for a connection token and page access. Never ask for the token in chat or place it in a command argument. The user can run `configure.py --set-notion-token` in their terminal, which prompts privately and saves an owner-only token file, or use `NOTION_TOKEN` for a manual run.
+- Optional TikTok collection URL, browser containing its login, and initial import count (default five). Instagram collection syncing is not supported.
+- For individual links that need login, the supported browser containing the relevant login. Do not assume a browser; both platforms use the configured browser.
 
-1. Where should the Markdown file be saved? Accept a normal `.md` path or a file inside an Obsidian vault.
-2. Do they want to sync a TikTok collection? If yes, ask for its URL and which browser contains their TikTok login. Default to `chrome` only if they confirm it.
-3. Single Markdown file, or one note per hook with an Obsidian Bases table? Recommend notes for Obsidian users.
-4. How many existing collection videos should the first sync import? Recommend five.
-
-Never ask for cookie values, passwords, or TikTok credentials. The local downloader reads the browser's cookie store itself.
-
-Run:
+Examples:
 
 ```bash
 ~/.local/share/tiktok-hooks/venv/bin/python <skill-dir>/scripts/configure.py \
-  --markdown-path "<absolute-or-home-relative-path>" \
-  --collection-url "<url-if-provided>" \
-  --browser "<browser-if-provided>" \
-  --layout <notes-or-single> \
-  --initial-count <count>
+  --destination obsidian --markdown-path "<vault>/Video Hooks.md"
+
+~/.local/share/tiktok-hooks/venv/bin/python <skill-dir>/scripts/configure.py \
+  --destination notion --notion-page "<page-url-or-id>"
 ```
 
-Omit collection arguments when the user only wants to save individual links. Tell the user where the configuration and Markdown file were created.
+Optional settings: `--collection-url "<TikTok-collection-url>" --browser "<browser>" --initial-count 5`. Never ask for browser cookie values or passwords; `yt-dlp` reads the local cookie store.
 
-If Python dependencies are missing, explain the install command from this skill's `README.md`. Do not install packages or Homebrew dependencies without permission.
+Selecting a destination does not copy existing hooks. Resubmit individual URLs or sync the initial collection batch to save there. Local output and each Notion parent page have separate duplicate tracking. Preserve the skill name and installation paths for backward compatibility.
 
-## Save one TikTok
-
-For a request containing an individual TikTok URL, run:
+## Save one video
 
 ```bash
-~/.local/share/tiktok-hooks/venv/bin/python <skill-dir>/scripts/sync.py \
-  --url "<tiktok-url>"
+~/.local/share/tiktok-hooks/venv/bin/python <skill-dir>/scripts/sync.py --url "<video-url>"
 ```
 
-Report the exact Markdown destination and whether a new hook was saved or the video was already present.
+Accept TikTok video links and Instagram `/reel/`, `/reels/`, single-video `/p/`, or `/tv/` links. Instagram profiles, saved collections, photo posts, and multi-item carousels are unsupported. Report an access failure honestly; login may be needed even for public Instagram videos. Do not try to bypass platform restrictions.
 
-## Sync a collection
+Report the saved destination and count, or that the video was already saved. `--force` is for local output only; existing Notion pages can be edited in Notion. Preserve `[hook:…]` title markers for retry deduplication.
 
-Run:
+## Sync a TikTok collection
 
 ```bash
 ~/.local/share/tiktok-hooks/venv/bin/python <skill-dir>/scripts/sync.py
 ```
 
-The script checks only the configured number of newest collection entries, processes unseen videos one at a time, and retries failures on the next run. The first collection sync imports only the configured initial count; it does not import the full backlog.
+The script checks a bounded window of newest entries, processes unseen videos sequentially, and saves each success immediately. First sync imports only the configured initial count. Failed videos remain eligible for retry while in the checked window. An explicit URL can import a skipped backlog video.
 
-Summarize the number of hooks added and the Markdown destination. If browser-cookie access fails, suggest fully quitting the configured browser and retrying once.
+For browser-cookie errors, suggest fully quitting the configured browser and retrying once. For Notion errors, report the actionable message (token, page sharing, rate limit, or network). Do not repeatedly retry a failed service in a loop. Summarize added hooks and failures separately.
 
 ## Scheduling
 
-Do not claim Claude itself runs continuously. The optional scheduler is a macOS `launchd` job that invokes the deterministic Python sync without Claude.
-
-Only offer scheduling after a manual collection sync succeeds. Install it only after explicit approval:
+Offer scheduling after a manual collection sync succeeds. Install it when the user requests or approves scheduling:
 
 ```bash
-~/.local/share/tiktok-hooks/venv/bin/python <skill-dir>/scripts/schedule.py \
-  --hour 9 --minute 0
+~/.local/share/tiktok-hooks/venv/bin/python <skill-dir>/scripts/schedule.py --hour 9 --minute 0
 ```
 
-To remove it:
+Use `--remove` to remove the schedule. This is a macOS `launchd` job running Python, not a continuously running Claude agent. The Mac must have network access and an opportunity to run. Notion schedules need the token file because a shell's `NOTION_TOKEN` is not automatically passed to `launchd`.
 
-```bash
-~/.local/share/tiktok-hooks/venv/bin/python <skill-dir>/scripts/schedule.py --remove
-```
+## Output and privacy
 
-Explain that the Mac must eventually wake and have network access; missed runs are handled when macOS next has an opportunity to run the job.
+Save the first two spoken sentences (three when the first two are under 12 words), opening JPEG, creator, platform, source URL, save date, and video ID. Speech recognition can be imperfect; this does not extract on-screen text or rank hooks.
 
-## Output contract
-
-Each saved entry contains:
-
-- the exact first two spoken sentences, or three when the first two are unusually short
-- a relative link to the extracted first frame
-- creator, source URL, save date, and TikTok video ID
-
-In the default `single` layout, entries are prepended to one Markdown file. In the `notes` layout, each hook is a note in a `<name>/` folder next to the configured Markdown path. Each note has `tiktok_id`, `creator`, `title`, `hook`, `source`, `saved`, and `frame` properties. A `<name>.base` file provides table and gallery views; it is created on the first sync and never overwritten.
-
-Keep the downloaded MP4 and temporary audio only while processing. Persist screenshots, Markdown, configuration, and deduplication state.
+Obsidian notes include platform/video ID properties and retain `tiktok_id` for TikTok compatibility. Existing `.base` files are never overwritten. Notion uses one child page per hook with an uploaded image, quote, metadata, and source bookmark. Transcription runs locally for both destinations. Temporary video/audio are deleted after processing; opening images and local state remain.

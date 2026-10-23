@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hooks import base_file, extract_hook, markdown_entry, note_entry, note_filename
+from notion import NotionDestination, NotionError
+from sources import platform_for_url, video_key
 
 CONFIG_DIR = Path(
     os.environ.get("TIKTOK_HOOKS_CONFIG_HOME", Path.home() / ".config" / "tiktok-hooks")
@@ -54,15 +56,17 @@ def write_json(path: Path, value) -> None:
 
 def load_config() -> dict:
     config = load_json(CONFIG_PATH, {})
-    if not config.get("markdown_path"):
+    if not config.get(
+        "notion_page_id" if config.get("destination") == "notion" else "markdown_path"
+    ):
         raise SyncError(
             f"No configuration found. Run scripts/configure.py before syncing ({CONFIG_PATH})."
         )
     return config
 
 
-def markdown_video_ids(markdown: Path) -> set[str]:
-    if not markdown.exists():
+def markdown_video_ids(markdown: Path | None) -> set[str]:
+    if markdown is None or not markdown.exists():
         return set()
 
     return set(
@@ -70,7 +74,7 @@ def markdown_video_ids(markdown: Path) -> set[str]:
     )
 
 
-def load_state(markdown: Path) -> dict:
+def load_state(markdown: Path | None) -> dict:
     state = load_json(
         STATE_PATH, {"saved": [], "skipped": [], "collection_initialized": False}
     )
@@ -148,19 +152,27 @@ def check_dependencies() -> str:
     return find_ffmpeg()
 
 
-def video_from_entry(entry: dict) -> dict | None:
+def video_from_entry(
+    entry: dict, platform: str = "tiktok", source_url: str | None = None
+) -> dict | None:
     if not entry or not entry.get("id"):
         return None
 
     video_id = str(entry["id"])
-    url = entry.get("webpage_url") or entry.get("url") or ""
-    if not str(url).startswith("http"):
+    url = source_url or entry.get("webpage_url") or entry.get("url") or ""
+    if not str(url).startswith("http") and platform == "tiktok":
         url = f"https://www.tiktok.com/@_/video/{video_id}"
 
     return {
         "id": video_id,
-        "title": " ".join((entry.get("title") or "").split()) or "Untitled TikTok",
-        "uploader": entry.get("uploader") or entry.get("channel") or "unknown",
+        "platform": platform,
+        "title": " ".join((entry.get("title") or "").split()) or "Untitled video",
+        "uploader": (
+            (entry.get("channel") or entry.get("uploader"))
+            if platform == "instagram"
+            else (entry.get("uploader") or entry.get("channel"))
+        )
+        or "unknown",
         "url": url,
     }
 
@@ -189,15 +201,29 @@ def list_collection(config: dict) -> list[dict]:
 
 
 def inspect_url(url: str, config: dict) -> dict:
+    try:
+        platform = platform_for_url(url)
+    except ValueError as error:
+        raise SyncError(str(error)) from None
     command = yt_dlp_command(config)
     command.extend(["--no-playlist", "--skip-download", "--dump-single-json", url])
     result = run(command, timeout=120)
     if result.returncode != 0:
-        raise SyncError(f"Could not read that TikTok:\n{result.stderr[-800:]}")
+        raise SyncError(f"Could not read that video:\n{result.stderr[-800:]}")
 
-    video = video_from_entry(json.loads(result.stdout))
+    data = json.loads(result.stdout)
+    if (
+        data.get("_type") in {"playlist", "multi_video"}
+        or data.get("entries") is not None
+    ):
+        raise SyncError(
+            "Use a single video or Reel link. Multi-item posts and profiles are not supported."
+        )
+    video = video_from_entry(data, platform=platform, source_url=url)
     if not video:
-        raise SyncError("TikTok returned no video metadata.")
+        raise SyncError(
+            "No video metadata was returned. Photo-only posts are not supported."
+        )
     return video
 
 
@@ -275,9 +301,9 @@ def process_video(
     ffmpeg: str,
     workdir: Path,
 ) -> dict:
-    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", video["id"])
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", video_key(video))
     if not safe_id:
-        raise SyncError("TikTok returned an invalid video ID.")
+        raise SyncError("The source returned an invalid video ID.")
 
     destination = workdir / safe_id
     destination.mkdir(parents=True, exist_ok=True)
@@ -357,14 +383,16 @@ def select_collection_videos(
 ) -> list[dict]:
     saved = set(state["saved"])
     skipped = set(state.get("skipped", []))
-    unseen = [video for video in videos if video["id"] not in saved | skipped]
+    unseen = [video for video in videos if video_key(video) not in saved | skipped]
     if state["collection_initialized"]:
         return unseen
 
     initial_count = config.get("initial_import_count", 5)
     selected = unseen[:initial_count]
-    selected_ids = {video["id"] for video in selected}
-    skipped.update(video["id"] for video in videos if video["id"] not in selected_ids)
+    selected_ids = {video_key(video) for video in selected}
+    skipped.update(
+        video_key(video) for video in videos if video_key(video) not in selected_ids
+    )
     state["skipped"] = sorted(skipped)
     state["collection_initialized"] = True
     return selected
@@ -372,8 +400,29 @@ def select_collection_videos(
 
 def sync(arguments: argparse.Namespace) -> tuple[list[dict], list[tuple[dict, str]]]:
     config = load_config()
-    markdown = Path(config["markdown_path"]).expanduser()
-    state = load_state(markdown)
+    is_notion = config.get("destination") == "notion"
+    markdown = (
+        Path(config["markdown_path"]).expanduser()
+        if config.get("markdown_path")
+        else None
+    )
+    root_state = load_state(markdown)
+    destination = NotionDestination(config) if is_notion else None
+    if is_notion:
+        if arguments.force:
+            raise SyncError(
+                "--force is only supported for local destinations. Edit existing Notion hook pages directly in Notion."
+            )
+        state = root_state.setdefault("notion", {}).setdefault(
+            destination.parent_id,
+            {
+                "saved": [],
+                "skipped": [],
+                "collection_initialized": False,
+            },
+        )
+    else:
+        state = root_state
     saved = set(state["saved"])
     check_downloader()
 
@@ -383,9 +432,9 @@ def sync(arguments: argparse.Namespace) -> tuple[list[dict], list[tuple[dict, st
         candidates = select_collection_videos(list_collection(config), state, config)
 
     if not arguments.force:
-        candidates = [video for video in candidates if video["id"] not in saved]
+        candidates = [video for video in candidates if video_key(video) not in saved]
     if not candidates:
-        write_json(STATE_PATH, state)
+        write_json(STATE_PATH, root_state)
         return [], []
 
     ffmpeg = check_dependencies()
@@ -399,28 +448,35 @@ def sync(arguments: argparse.Namespace) -> tuple[list[dict], list[tuple[dict, st
         for video in candidates:
             print(f"Processing @{video['uploader']}: {video['title'][:70]}")
             try:
-                completed.append(process_video(video, config, model, ffmpeg, workdir))
+                result = process_video(video, config, model, ffmpeg, workdir)
+                if destination:
+                    result["notion_page_id"] = destination.save(result)
+                elif config.get("layout") == "notes":
+                    write_notes(markdown, [result])
+                else:
+                    append_markdown(markdown, [result])
+                saved.add(video_key(result))
+                state["saved"] = sorted(saved)
+                state["skipped"] = sorted(set(state["skipped"]) - saved)
+                write_json(STATE_PATH, root_state)
+                completed.append(result)
             except Exception as error:  # noqa: BLE001
                 failed.append((video, str(error)))
                 print(f"warning: {video['id']} failed: {error}", file=sys.stderr)
 
-    if completed:
-        if config.get("layout") == "notes":
-            write_notes(markdown, completed)
-        else:
-            append_markdown(markdown, completed)
-        saved.update(video["id"] for video in completed)
-
     state["saved"] = sorted(saved | set(state["saved"]))
     state["skipped"] = sorted(set(state["skipped"]) - set(state["saved"]))
-    write_json(STATE_PATH, state)
+    write_json(STATE_PATH, root_state)
     return completed, failed
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Save TikTok hooks to local Markdown.")
+    parser = argparse.ArgumentParser(
+        description="Save TikTok or Instagram hooks to Obsidian, Markdown, or Notion."
+    )
     parser.add_argument(
-        "--url", help="save one TikTok instead of syncing the collection"
+        "--url",
+        help="save a TikTok or Instagram video instead of syncing the TikTok collection",
     )
     parser.add_argument(
         "--force", action="store_true", help="process an already-seen video"
@@ -430,16 +486,19 @@ def main() -> None:
     try:
         with sync_lock():
             completed, failed = sync(arguments)
-    except SyncError as error:
+    except (SyncError, NotionError, ValueError) as error:
         sys.exit(f"error: {error}")
 
     config = load_config()
-    markdown = Path(config["markdown_path"]).expanduser()
-    destination = (
-        f"{notes_folder(markdown)}/ (table: {markdown.with_suffix('.base').name})"
-        if config.get("layout") == "notes"
-        else str(markdown)
-    )
+    if config.get("destination") == "notion":
+        destination = f"Notion page {config['notion_page_id']}"
+    else:
+        markdown = Path(config["markdown_path"]).expanduser()
+        destination = (
+            f"{notes_folder(markdown)}/ (table: {markdown.with_suffix('.base').name})"
+            if config.get("layout") == "notes"
+            else str(markdown)
+        )
     if completed:
         print(f"Saved {len(completed)} hook(s) to {destination}")
     elif not failed:

@@ -76,7 +76,7 @@ class ConfigurationTests(unittest.TestCase):
             with patch.object(configure, "CONFIG_PATH", config_path):
                 config = configure.configure(arguments)
 
-            self.assertEqual(config["markdown_path"], str(markdown))
+            self.assertEqual(config["markdown_path"], str(markdown.resolve()))
             self.assertEqual(markdown.read_text(), "# TikTok Hooks\n\n")
             self.assertTrue(Path(config["assets_path"]).is_dir())
             self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)

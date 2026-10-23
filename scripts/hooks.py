@@ -1,10 +1,12 @@
-"""Pure helpers for extracting and formatting TikTok hooks."""
+"""Pure helpers for extracting and formatting video hooks."""
 
 import json
 import os
 import re
 from datetime import datetime
 from pathlib import Path
+
+from sources import platform_label, video_key
 
 SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 MAX_SENTENCES = 3
@@ -32,8 +34,10 @@ properties:
     displayName: Saved
   note.source:
     displayName: Source
-  note.tiktok_id:
-    displayName: TikTok ID
+  note.platform:
+    displayName: Platform
+  note.video_id:
+    displayName: Video ID
 views:
   - type: table
     name: Hooks
@@ -88,7 +92,7 @@ def saved_date(video: dict) -> str:
 def markdown_entry(video: dict, markdown_path: Path) -> str:
     frame = Path(video["frame_path"])
     relative_frame = Path(os.path.relpath(frame, markdown_path.parent)).as_posix()
-    title = clean_inline(video.get("title", ""), "Untitled TikTok")
+    title = clean_inline(video.get("title", ""), "Untitled video")
     creator = clean_inline(video.get("uploader", ""), "unknown")
     hook = clean_inline(video.get("hook", ""), "No speech detected.")
     saved = saved_date(video)
@@ -100,28 +104,30 @@ def markdown_entry(video: dict, markdown_path: Path) -> str:
         f"- Creator: @{creator.lstrip('@')}\n"
         f"- Source: <{video['url']}>\n"
         f"- Saved: {saved}\n"
-        f"- TikTok ID: `{video['id']}`\n\n"
+        f"- {platform_label(video)} ID: `{video['id']}`\n\n"
     )
 
 
 def note_filename(video: dict) -> str:
     """One note per hook: '<creator> — <short title>.md', unique via the video ID."""
-    creator = clean_inline(video.get("uploader", ""), "unknown").lstrip("@")
+    creator = UNSAFE_FILENAME.sub(
+        "", clean_inline(video.get("uploader", ""), "unknown").lstrip("@")
+    )
     title = clean_inline(video.get("title", ""), "")
-    if not title or title == "Untitled TikTok":
+    if not title or title == "Untitled video":
         title = clean_inline(video.get("hook", ""), "")
     title = UNSAFE_FILENAME.sub("", title).strip(" .")
     if len(title) > MAX_NOTE_TITLE:
         title = title[:MAX_NOTE_TITLE].rsplit(" ", 1)[0].rstrip(" ,;:-") + "…"
     stem = f"@{creator} — {title}" if title else f"@{creator}"
-    return f"{stem} ({video['id']}).md"
+    return f"{stem} ({video_key(video)}).md"
 
 
 def note_entry(video: dict, note_path: Path) -> str:
     """A note with YAML properties so Obsidian Bases can show it as a table row."""
     frame = Path(video["frame_path"])
     relative_frame = Path(os.path.relpath(frame, note_path.parent)).as_posix()
-    title = clean_inline(video.get("title", ""), "Untitled TikTok")
+    title = clean_inline(video.get("title", ""), "Untitled video")
     creator = "@" + clean_inline(video.get("uploader", ""), "unknown").lstrip("@")
     hook = clean_inline(video.get("hook", ""), "No speech detected.")
     saved = saved_date(video)
@@ -132,7 +138,9 @@ def note_entry(video: dict, note_path: Path) -> str:
 
     return (
         "---\n"
-        f"tiktok_id: {yaml(video['id'])}\n"
+        f"{video.get('platform', 'tiktok')}_id: {yaml(video['id'])}\n"
+        f"platform: {yaml(video.get('platform', 'tiktok'))}\n"
+        f"video_id: {yaml(video['id'])}\n"
         f"creator: {yaml(creator)}\n"
         f"title: {yaml(title)}\n"
         f"hook: {yaml(hook)}\n"
@@ -140,11 +148,11 @@ def note_entry(video: dict, note_path: Path) -> str:
         f"saved: {saved}\n"
         f"frame: {yaml(frame_link)}\n"
         "tags:\n"
-        "  - tiktok-hook\n"
+        f"  - {video.get('platform', 'tiktok')}-hook\n"
         "---\n\n"
         f"![Opening frame](<{relative_frame}>)\n\n"
         f"> {hook}\n\n"
-        f"Creator: {creator} · [Watch on TikTok]({video['url']}) · Saved {saved}\n"
+        f"Creator: {creator} · [Watch on {platform_label(video)}]({video['url']}) · Saved {saved}\n"
     )
 
 
