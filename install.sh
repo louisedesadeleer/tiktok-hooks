@@ -10,7 +10,7 @@ SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 TARGET_DIR="$SKILLS_DIR/tiktok-hooks"
 DATA_DIR="$HOME/.local/share/tiktok-hooks"
 VENV_DIR="$DATA_DIR/venv"
-BASE_URL="${TIKTOK_HOOKS_BASE_URL:-https://raw.githubusercontent.com/louisedesadeleer/tiktok-hooks/v1.0.0}"
+BASE_URL="${TIKTOK_HOOKS_BASE_URL:-https://raw.githubusercontent.com/louisedesadeleer/tiktok-hooks/main}"
 
 python3 - <<'PY'
 import sys
@@ -31,7 +31,7 @@ else
   }
   rm -rf "$TARGET_DIR"
   mkdir -p "$TARGET_DIR/scripts"
-  for file in SKILL.md README.md requirements.txt scripts/configure.py scripts/hooks.py scripts/schedule.py scripts/sync.py; do
+  for file in SKILL.md README.md requirements.txt scripts/configure.py scripts/hooks.py scripts/sources.py scripts/notion.py scripts/schedule.py scripts/sync.py; do
     curl -fsSL "$BASE_URL/$file" -o "$TARGET_DIR/$file"
   done
 fi
