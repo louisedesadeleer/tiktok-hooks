@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from notion import DEFAULT_TOKEN_FILE, page_id
+from notion import DEFAULT_TOKEN_FILE, NotionDestination, NotionError, page_id
 
 CONFIG_DIR = Path(
     os.environ.get("TIKTOK_HOOKS_CONFIG_HOME", Path.home() / ".config" / "tiktok-hooks")
@@ -78,14 +78,21 @@ def configure(arguments: argparse.Namespace) -> dict:
     if collection_url and not browser:
         sys.exit("A --browser is required when configuring a private collection.")
 
-    notion_page = getattr(arguments, "notion_page", None) or current.get(
-        "notion_page_id"
+    new_page = getattr(arguments, "notion_page", None)
+    new_database = getattr(arguments, "notion_database", None)
+    notion_page = new_page or current.get("notion_page_id")
+    # A newly chosen parent page replaces a saved database, and vice versa.
+    notion_database = new_database or (
+        None if new_page else current.get("notion_database_id")
     )
     if destination == "notion":
-        if not notion_page:
-            sys.exit("A --notion-page URL or page ID is required for Notion.")
+        if not notion_page and not notion_database:
+            sys.exit(
+                "A --notion-page or --notion-database URL or ID is required for Notion."
+            )
         try:
-            notion_page = page_id(notion_page)
+            notion_page = page_id(notion_page) if notion_page else None
+            notion_database = page_id(notion_database) if notion_database else None
         except ValueError as error:
             sys.exit(str(error))
 
@@ -132,6 +139,7 @@ def configure(arguments: argparse.Namespace) -> dict:
         "initial_import_count": initial_count,
         "check_count": check_count,
         "notion_page_id": notion_page,
+        "notion_database_id": notion_database,
         "notion_token_file": str(
             Path(
                 getattr(arguments, "notion_token_file", None)
@@ -162,6 +170,15 @@ def configure(arguments: argparse.Namespace) -> dict:
             os.fchmod(file.fileno(), 0o600)
             file.write(token + "\n")
 
+    if getattr(arguments, "notion_create_database", False):
+        if not notion_page:
+            sys.exit("--notion-create-database needs a --notion-page to create it in.")
+        try:
+            parent = {**config, "notion_database_id": None}
+            config["notion_database_id"] = NotionDestination(parent).create_database()
+        except NotionError as error:
+            sys.exit(f"Could not create the Notion database: {error}")
+
     write_json(CONFIG_PATH, config)
     return config
 
@@ -171,6 +188,15 @@ def main() -> None:
     parser.add_argument("--destination", choices=("obsidian", "notion", "markdown"))
     parser.add_argument(
         "--notion-page", help="Parent Notion page URL or ID (not a database)"
+    )
+    parser.add_argument(
+        "--notion-database",
+        help="Notion database URL or ID; each hook becomes a row",
+    )
+    parser.add_argument(
+        "--notion-create-database",
+        action="store_true",
+        help="Create a 'Video Hooks' database inside --notion-page and save rows there",
     )
     parser.add_argument(
         "--notion-token-file", help="Path to a private token file for unattended syncs"
@@ -204,7 +230,9 @@ def main() -> None:
 
     config = configure(arguments)
     print(f"Configuration: {CONFIG_PATH}")
-    if config["destination"] == "notion":
+    if config["destination"] == "notion" and config.get("notion_database_id"):
+        print(f"Notion database: {config['notion_database_id']}")
+    elif config["destination"] == "notion":
         print(f"Notion parent page: {config['notion_page_id']}")
     elif config["layout"] == "notes":
         folder = Path(config["markdown_path"]).with_suffix("")

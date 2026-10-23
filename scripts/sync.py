@@ -56,9 +56,11 @@ def write_json(path: Path, value) -> None:
 
 def load_config() -> dict:
     config = load_json(CONFIG_PATH, {})
-    if not config.get(
-        "notion_page_id" if config.get("destination") == "notion" else "markdown_path"
-    ):
+    if config.get("destination") == "notion":
+        configured = config.get("notion_page_id") or config.get("notion_database_id")
+    else:
+        configured = config.get("markdown_path")
+    if not configured:
         raise SyncError(
             f"No configuration found. Run scripts/configure.py before syncing ({CONFIG_PATH})."
         )
@@ -490,7 +492,9 @@ def main() -> None:
         sys.exit(f"error: {error}")
 
     config = load_config()
-    if config.get("destination") == "notion":
+    if config.get("destination") == "notion" and config.get("notion_database_id"):
+        destination = f"Notion database {config['notion_database_id']}"
+    elif config.get("destination") == "notion":
         destination = f"Notion page {config['notion_page_id']}"
     else:
         markdown = Path(config["markdown_path"]).expanduser()

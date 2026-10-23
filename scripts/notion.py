@@ -4,6 +4,7 @@ import json
 import os
 import re
 import uuid
+from datetime import datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
@@ -26,7 +27,7 @@ def page_id(value: str) -> str:
         parsed = urlparse(candidate)
         host = parsed.hostname or ""
         if not (
-            host in {"notion.so", "www.notion.so", "notion.site"}
+            host in {"notion.so", "www.notion.so", "app.notion.com", "notion.site"}
             or host.endswith(".notion.site")
         ):
             raise ValueError("Use a Notion page URL or page ID.")
@@ -53,9 +54,25 @@ def text_block(kind: str, text: str) -> dict:
     return {"object": "block", "type": kind, kind: {"rich_text": rich_text(text)}}
 
 
+# Database columns the skill fills when a column with that name and type exists.
+DATABASE_COLUMNS = {
+    "Hook": "rich_text",
+    "Creator": "rich_text",
+    "Platform": "select",
+    "Source": "url",
+    "Saved": "date",
+    "Video ID": "rich_text",
+}
+
+
 class NotionDestination:
     def __init__(self, config: dict):
-        self.parent_id = page_id(config["notion_page_id"])
+        database = config.get("notion_database_id")
+        self.database_id = page_id(database) if database else None
+        # parent_id doubles as the duplicate-tracking key for this destination.
+        self.parent_id = self.database_id or page_id(config["notion_page_id"])
+        self._data_source_id = None
+        self._columns = None
         self.token = os.environ.get("NOTION_TOKEN", "").strip()
         if not self.token:
             token_file = Path(
@@ -103,7 +120,7 @@ class NotionDestination:
             hint = {
                 401: "Check the Notion connection token.",
                 403: "Give the Notion connection read, insert, and update content access.",
-                404: "Share the parent page with the Notion connection and check its page ID.",
+                404: "Share the parent page or database with the Notion connection and check its ID.",
                 429: "Notion is rate limiting requests; retry the sync later.",
             }.get(
                 error.code,
@@ -168,19 +185,122 @@ class NotionDestination:
             )
         return upload_id
 
+    def create_database(self, title: str = "Video Hooks") -> str:
+        # Full-page database inside the parent page, with every column the skill fills.
+        result = self.request(
+            "POST",
+            "/databases",
+            {
+                "parent": {"type": "page_id", "page_id": self.parent_id},
+                "title": rich_text(title),
+                "is_inline": False,
+                "initial_data_source": {
+                    "properties": {
+                        "Name": {"title": {}},
+                        "Hook": {"rich_text": {}},
+                        "Creator": {"rich_text": {}},
+                        "Platform": {
+                            "select": {
+                                "options": [
+                                    {"name": "TikTok", "color": "pink"},
+                                    {"name": "Instagram", "color": "purple"},
+                                ]
+                            }
+                        },
+                        "Saved": {"date": {}},
+                        "Source": {"url": {}},
+                        "Video ID": {"rich_text": {}},
+                    }
+                },
+            },
+        )
+        return str(uuid.UUID(result["id"]))
+
+    def database_schema(self) -> tuple[str, dict[str, str]]:
+        # Resolve the database's data source and its column names → types once.
+        if self._data_source_id is None:
+            database = self.request("GET", f"/databases/{self.database_id}")
+            sources = database.get("data_sources") or []
+            if not sources:
+                raise NotionError(
+                    "The Notion database has no data source; check the database link."
+                )
+            data_source_id = sources[0]["id"]
+            schema = self.request("GET", f"/data_sources/{data_source_id}")
+            self._columns = {
+                name: column.get("type")
+                for name, column in (schema.get("properties") or {}).items()
+            }
+            if "title" not in self._columns.values():
+                raise NotionError("The Notion database has no title column.")
+            self._data_source_id = data_source_id
+        return self._data_source_id, self._columns
+
+    def has_column(self, name: str) -> bool:
+        return self._columns.get(name) == DATABASE_COLUMNS[name]
+
+    def find_existing_row(self, key: str, marker: str) -> str | None:
+        data_source_id, columns = self.database_schema()
+        if self.has_column("Video ID"):
+            condition = {"property": "Video ID", "rich_text": {"equals": key}}
+        else:
+            title = next(name for name, kind in columns.items() if kind == "title")
+            condition = {"property": title, "title": {"ends_with": marker}}
+        result = self.request(
+            "POST",
+            f"/data_sources/{data_source_id}/query",
+            {"filter": condition, "page_size": 1},
+        )
+        rows = result.get("results") or []
+        return rows[0]["id"] if rows else None
+
+    def row_properties(self, video: dict, key: str, marker: str) -> dict:
+        _, columns = self.database_schema()
+        title_column = next(name for name, kind in columns.items() if kind == "title")
+        title = f"@{video['uploader']} — {video['title']}"[:180]
+        if not self.has_column("Video ID"):
+            title += " " + marker
+        values = {
+            "Hook": {"rich_text": rich_text(video["hook"])},
+            "Creator": {"rich_text": rich_text("@" + str(video["uploader"]).lstrip("@"))},
+            "Platform": {"select": {"name": platform_label(video)}},
+            "Source": {"url": video["url"]},
+            "Saved": {
+                "date": {
+                    "start": datetime.fromisoformat(video["saved_at"])
+                    .replace(microsecond=0)
+                    .isoformat()
+                }
+            },
+            "Video ID": {"rich_text": rich_text(key)},
+        }
+        properties = {title_column: {"title": rich_text(title)}}
+        properties.update(
+            {name: value for name, value in values.items() if self.has_column(name)}
+        )
+        return properties
+
     def save(self, video: dict) -> str:
-        marker = f"[hook:{video_key(video)}]"
-        existing = self.find_existing(marker)
+        key = video_key(video)
+        marker = f"[hook:{key}]"
+        if self.database_id:
+            existing = self.find_existing_row(key, marker)
+            parent = {"type": "data_source_id", "data_source_id": self._data_source_id}
+            properties = self.row_properties(video, key, marker)
+        else:
+            existing = self.find_existing(marker)
+            parent = {"type": "page_id", "page_id": self.parent_id}
+            title = f"@{video['uploader']} — {video['title']}"[:180] + " " + marker
+            properties = {"title": {"type": "title", "title": rich_text(title)}}
         if existing:
             return existing
         upload_id = self.upload_frame(Path(video["frame_path"]))
-        title = f"@{video['uploader']} — {video['title']}"[:180] + " " + marker
         result = self.request(
             "POST",
             "/pages",
             {
-                "parent": {"type": "page_id", "page_id": self.parent_id},
-                "properties": {"title": {"type": "title", "title": rich_text(title)}},
+                "parent": parent,
+                "properties": properties,
                 "children": [
                     {
                         "object": "block",

@@ -407,3 +407,146 @@ class SyncDestinationTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(state_path.read_text())["notion"][PARENT]["saved"], ["123"]
             )
+
+
+DATABASE = "32345678-1234-1234-1234-123456789abc"
+DATA_SOURCE = "42345678-1234-1234-1234-123456789abc"
+FULL_SCHEMA = {
+    "Name": {"type": "title"},
+    "Hook": {"type": "rich_text"},
+    "Creator": {"type": "rich_text"},
+    "Platform": {"type": "select"},
+    "Source": {"type": "url"},
+    "Saved": {"type": "date"},
+    "Video ID": {"type": "rich_text"},
+}
+
+
+class NotionDatabaseTests(unittest.TestCase):
+    def destination(self):
+        with patch.dict(os.environ, {"NOTION_TOKEN": "test-secret"}):
+            return notion.NotionDestination(
+                {"notion_page_id": PARENT, "notion_database_id": DATABASE}
+            )
+
+    def test_database_takes_precedence_and_is_tracking_key(self):
+        self.assertEqual(self.destination().parent_id, DATABASE)
+
+    def test_creates_row_with_columns_and_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            item = video(Path(directory))
+            destination = self.destination()
+            with patch.object(
+                destination,
+                "request",
+                side_effect=[
+                    {"data_sources": [{"id": DATA_SOURCE}]},
+                    {"properties": FULL_SCHEMA},
+                    {"results": []},
+                    {"id": UPLOAD},
+                    {"status": "uploaded"},
+                    {"id": "new-row"},
+                ],
+            ) as request:
+                self.assertEqual(destination.save(item), "new-row")
+            calls = request.call_args_list
+            self.assertEqual(calls[0].args[:2], ("GET", f"/databases/{DATABASE}"))
+            query = calls[2].args[2]["filter"]
+            self.assertEqual(query["property"], "Video ID")
+            self.assertEqual(query["rich_text"]["equals"], "instagram-123")
+            page = calls[5].args[2]
+            self.assertEqual(page["parent"]["data_source_id"], DATA_SOURCE)
+            props = page["properties"]
+            title = props["Name"]["title"][0]["text"]["content"]
+            self.assertEqual(title, "@creator — A hook")
+            self.assertEqual(props["Platform"]["select"]["name"], "Instagram")
+            self.assertEqual(props["Source"]["url"], item["url"])
+            self.assertEqual(props["Saved"]["date"]["start"], item["saved_at"])
+            self.assertEqual(props["Creator"]["rich_text"][0]["text"]["content"], "@creator")
+            self.assertEqual(page["children"][0]["image"]["file_upload"]["id"], UPLOAD)
+
+    def test_existing_row_is_not_duplicated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = self.destination()
+            with patch.object(
+                destination,
+                "request",
+                side_effect=[
+                    {"data_sources": [{"id": DATA_SOURCE}]},
+                    {"properties": FULL_SCHEMA},
+                    {"results": [{"id": "existing-row"}]},
+                ],
+            ) as request:
+                self.assertEqual(destination.save(video(Path(directory))), "existing-row")
+            self.assertEqual(request.call_count, 3)
+
+    def test_minimal_database_keeps_marker_in_title_and_skips_missing_columns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = self.destination()
+            with patch.object(
+                destination,
+                "request",
+                side_effect=[
+                    {"data_sources": [{"id": DATA_SOURCE}]},
+                    {"properties": {"Title": {"type": "title"}, "Hook": {"type": "url"}}},
+                    {"results": []},
+                    {"id": UPLOAD},
+                    {"status": "uploaded"},
+                    {"id": "row"},
+                ],
+            ) as request:
+                destination.save(video(Path(directory)))
+            calls = request.call_args_list
+            self.assertEqual(calls[2].args[2]["filter"]["title"]["ends_with"], "[hook:instagram-123]")
+            props = calls[5].args[2]["properties"]
+            self.assertEqual(list(props), ["Title"])
+            self.assertTrue(
+                props["Title"]["title"][0]["text"]["content"].endswith("[hook:instagram-123]")
+            )
+
+    def test_configure_database_and_switch_back_to_page(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(configure, "CONFIG_PATH", Path(directory) / "config.json"):
+                config = configure.configure(
+                    arguments(
+                        destination="notion",
+                        notion_database="https://app.notion.com/p/" + DATABASE.replace("-", ""),
+                    )
+                )
+                self.assertEqual(config["notion_database_id"], DATABASE)
+                config = configure.configure(arguments(notion_page=PARENT))
+                self.assertIsNone(config["notion_database_id"])
+                self.assertEqual(config["notion_page_id"], PARENT)
+
+    def test_create_database_payload(self):
+        with patch.dict(os.environ, {"NOTION_TOKEN": "test-secret"}):
+            destination = notion.NotionDestination({"notion_page_id": PARENT})
+        with patch.object(destination, "request", return_value={"id": DATABASE}) as request:
+            self.assertEqual(destination.create_database(), DATABASE)
+        method, path, payload = request.call_args.args
+        self.assertEqual((method, path), ("POST", "/databases"))
+        self.assertEqual(payload["parent"]["page_id"], PARENT)
+        columns = payload["initial_data_source"]["properties"]
+        for name, kind in notion.DATABASE_COLUMNS.items():
+            self.assertIn(kind, columns[name])
+        self.assertIn("title", columns["Name"])
+
+    def test_configure_creates_database_in_parent_page(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(configure, "CONFIG_PATH", Path(directory) / "config.json"),
+            patch.dict(os.environ, {"NOTION_TOKEN": "test-secret"}),
+            patch.object(
+                notion.NotionDestination, "create_database", return_value=DATABASE
+            ) as create,
+        ):
+            config = configure.configure(
+                arguments(
+                    destination="notion",
+                    notion_page=PARENT,
+                    notion_create_database=True,
+                )
+            )
+        create.assert_called_once()
+        self.assertEqual(config["notion_database_id"], DATABASE)
+        self.assertEqual(config["notion_page_id"], PARENT)

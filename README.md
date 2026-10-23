@@ -15,7 +15,7 @@ Save the first 2–3 spoken sentences and actual opening frame from TikTok video
 
 - macOS, Python 3.10+, and `ffmpeg` (`brew install ffmpeg`)
 - For videos that require login: Chrome, Chromium, Brave, Edge, Firefox, Safari, Opera, or Vivaldi logged into the relevant platform. Arc is not supported.
-- For Notion: a Notion internal connection token and a page shared with that connection
+- For Notion: a Notion internal connection token, shared with the hooks database or its parent page
 
 Install or update from a checkout:
 
@@ -25,7 +25,15 @@ cd tiktok-hooks
 bash install.sh
 ```
 
-For an existing checkout, pull the latest changes before running `bash install.sh` again. Configuration and saved hooks are preserved. The installer copies the skill to `~/.claude/skills/tiktok-hooks` and creates an isolated Python environment at `~/.local/share/tiktok-hooks/venv` with `yt-dlp` and Whisper. It does not install `ffmpeg`.
+For an existing checkout, pull the latest changes before running `bash install.sh` again. Configuration and saved hooks are preserved. The installer copies the skill to `~/.claude/skills/tiktok-hooks` and creates an isolated Python environment at `~/.local/share/tiktok-hooks/venv` with `yt-dlp` and Whisper. It does not install `ffmpeg` or Homebrew; it ends by running the requirements check below.
+
+Check what's installed at any time:
+
+```bash
+python3 scripts/doctor.py
+```
+
+It lists macOS, Python 3.10+, Homebrew, ffmpeg, the skill files, Whisper and yt-dlp, the Whisper model, and your configuration, with the command to fix anything missing. Homebrew is only needed to install ffmpeg (`brew install ffmpeg`).
 
 Then ask Claude:
 
@@ -55,22 +63,34 @@ Use `--layout single` to save to one Markdown file instead. For a folder outside
 ### Notion
 
 1. Create an internal connection in [Notion's integrations settings](https://www.notion.so/profile/integrations), with read, insert, and update content capabilities.
-2. On the parent **page** where hooks should appear, add that connection through the page's Connections menu. A database URL is not supported; use a normal page.
-3. Run this in your own terminal. The token prompt is hidden; never paste your token into chat or commit it to Git.
+2. Hooks are saved to a **database**, one row per hook. Either let Claude create a "Video Hooks" database with its Notion connector, or create one yourself, or let the script create it inside a page (below).
+3. Add your connection to the database (or its parent page) through ••• → Connections.
+4. Run one of these in your own terminal. The token prompt is hidden; never paste your token into chat or commit it to Git.
 
 ```bash
+# Use an existing database
+~/.local/share/tiktok-hooks/venv/bin/python \
+  ~/.claude/skills/tiktok-hooks/scripts/configure.py \
+  --destination notion \
+  --notion-database "https://www.notion.so/your-database-id" \
+  --set-notion-token
+
+# Or create a "Video Hooks" database inside a page
 ~/.local/share/tiktok-hooks/venv/bin/python \
   ~/.claude/skills/tiktok-hooks/scripts/configure.py \
   --destination notion \
   --notion-page "https://www.notion.so/your-page-id" \
+  --notion-create-database \
   --set-notion-token
 ```
 
-Each hook becomes a child page with its opening JPEG uploaded to Notion, the spoken hook, metadata, and a source bookmark. The transcript and opening image are sent to Notion; transcription still runs locally. No public image hosting is needed.
+Database columns: the skill fills these columns when they exist with these types: `Hook` (text), `Creator` (text), `Platform` (select), `Source` (URL), `Saved` (date) and `Video ID` (text); the title column is filled whatever it is named, and missing columns are skipped. Each row's page body holds the opening image, so a gallery view with *Card preview: Page content* shows it. Without a `Video ID` column, the `[hook:…]` marker stays in the title for retry deduplication. A database has its own duplicate tracking, so switching to one re-imports the initial collection batch there.
+
+With `--notion-page` alone (no database), each hook instead becomes a child page. In both cases the hook's page body holds its opening JPEG uploaded to Notion, the spoken hook, metadata, and a source bookmark. The transcript and opening image are sent to Notion; transcription still runs locally. No public image hosting is needed.
 
 The token is stored separately from configuration at `~/.config/tiktok-hooks/notion-token`, with owner-only file permissions. This file lets scheduled syncs work without an open terminal. `--notion-token-file` chooses another location. Alternatively, provide `NOTION_TOKEN` in the process environment for a manual run; shell environment variables are not automatically inherited by `launchd`.
 
-Choosing Notion does not need a Markdown path. Previously saved local hooks are left in place. Duplicate tracking is independent for the local destination and each Notion parent page. Switching destinations does not bulk-copy existing hooks: submit their URLs again, or sync the configured initial collection batch. Notion page titles include a stable `[hook:…]` marker so a retry can recover after a lost server response; preserve that marker. `--force` is only available for local output; edit existing Notion hook pages directly.
+Choosing Notion does not need a Markdown path. Previously saved local hooks are left in place. Duplicate tracking is independent for the local destination, each Notion parent page, and each Notion database. Switching destinations does not bulk-copy existing hooks: submit their URLs again, or sync the configured initial collection batch. Notion page titles include a stable `[hook:…]` marker so a retry can recover after a lost server response; preserve that marker. `--force` is only available for local output; edit existing Notion hook pages directly.
 
 ## Save a video
 
@@ -130,3 +150,11 @@ bash -n install.sh
 ```
 
 Tests use mocked platform metadata and Notion API responses. Live extraction depends on platform access, and a live Notion test requires a token and a shared test page.
+
+## Uninstall
+
+```bash
+bash ~/.claude/skills/tiktok-hooks/uninstall.sh
+```
+
+Removes the daily sync, the skill files, the Python environment (Whisper and yt-dlp), configuration, the Notion token, sync state, and the Whisper model cache, after asking you to confirm (`--yes` skips the question; `--keep-whisper-model` keeps the model). Your saved hooks, ffmpeg, and Homebrew stay. Delete the Notion connection at [notion.so/profile/integrations](https://www.notion.so/profile/integrations) and any hooks database in Notion yourself.

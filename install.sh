@@ -31,7 +31,7 @@ else
   }
   rm -rf "$TARGET_DIR"
   mkdir -p "$TARGET_DIR/scripts"
-  for file in SKILL.md README.md requirements.txt scripts/configure.py scripts/hooks.py scripts/sources.py scripts/notion.py scripts/schedule.py scripts/sync.py; do
+  for file in SKILL.md README.md requirements.txt scripts/configure.py scripts/hooks.py scripts/sources.py scripts/notion.py scripts/schedule.py scripts/sync.py scripts/doctor.py uninstall.sh; do
     curl -fsSL "$BASE_URL/$file" -o "$TARGET_DIR/$file"
   done
 fi
@@ -40,9 +40,9 @@ python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 "$VENV_DIR/bin/python" -m pip install -r "$TARGET_DIR/requirements.txt"
 
-printf '\nInstalled TikTok Hooks at %s\n' "$TARGET_DIR"
-printf 'Next: ask Claude to “Set up my TikTok hooks skill.”\n'
-
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  printf '\nffmpeg is still required. On macOS, install it with: brew install ffmpeg\n'
-fi
+printf '\nInstalled TikTok Hooks at %s\n\n' "$TARGET_DIR"
+python3 "$TARGET_DIR/scripts/doctor.py" || {
+  printf '\nFix the items marked ✗ above, then ask Claude to “Set up my TikTok hooks skill.”\n'
+  exit 0
+}
+printf '\nNext: ask Claude to “Set up my TikTok hooks skill.”\n'
