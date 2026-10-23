@@ -18,7 +18,7 @@ Ask for missing choices:
 - For Obsidian/Markdown: the `.md` path. Obsidian defaults to one note per hook plus a Bases table/gallery; `--layout single` keeps everything in one file.
 - For Notion: the parent page URL. Use a normal page, not a database. Explain that the hook text, metadata, and opening image will be uploaded there. Follow the Notion setup section in [README.md](README.md) for a connection token and page access. Never ask for the token in chat or place it in a command argument. The user can run `configure.py --set-notion-token` in their terminal, which prompts privately and saves an owner-only token file, or use `NOTION_TOKEN` for a manual run.
 - Optional TikTok collection URL, browser containing its login, and initial import count (default five). Instagram collection syncing is not supported.
-- For individual links that need login, the supported browser containing the relevant login. Do not assume a browser; both platforms use the configured browser.
+- For individual links that need login, the supported browser containing the relevant login. Offer only Chrome, Chromium, Brave, Edge, Firefox, Safari, Opera, or Vivaldi. Never offer Arc or ask whether the user uses Arc; it is unsupported. If the user mentions Arc, ask them to log into TikTok or Instagram in one of the supported browsers. Apply this same browser list when configuring a TikTok collection. Do not assume a browser; both platforms use the configured browser.
 
 Examples:
 
